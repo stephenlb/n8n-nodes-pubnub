@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║       Starting n8n with PubNub Custom Nodes              ║"
+echo "║       Starting n8n with PubNub Custom Nodes               ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo ""
 
