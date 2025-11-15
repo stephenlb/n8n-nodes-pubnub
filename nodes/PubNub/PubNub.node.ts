@@ -491,6 +491,7 @@ export class PubNub implements INodeType {
 			subscribeKey: credentials.subscribeKey as string,
 			secretKey: (credentials.secretKey as string) || undefined,
 			userId: (credentials.userId as string) || `n8n-user-${Date.now()}`,
+			authKey: (credentials.authKey as string) || undefined,
 		});
 
 		try {

@@ -17,7 +17,7 @@ export class PubNubApi implements ICredentialType {
 			displayName: 'Publish Key',
 			name: 'publishKey',
 			type: 'string',
-			typeOptions: { password: true },
+			typeOptions: { password: false },
 			default: '',
 			required: true,
 			description: 'Your PubNub Publish Key - required for publishing messages',
@@ -26,7 +26,7 @@ export class PubNubApi implements ICredentialType {
 			displayName: 'Subscribe Key',
 			name: 'subscribeKey',
 			type: 'string',
-			typeOptions: { password: true },
+			typeOptions: { password: false },
 			default: '',
 			required: true,
 			description: 'Your PubNub Subscribe Key - required for subscribing to channels',
@@ -46,6 +46,14 @@ export class PubNubApi implements ICredentialType {
 			default: '',
 			placeholder: 'e.g., user-12345',
 			description: 'Unique identifier for this client. If not provided, will be auto-generated.',
+		},
+		{
+			displayName: 'Auth Token',
+			name: 'authKey',
+			type: 'string',
+			typeOptions: { password: true },
+			default: '',
+			description: 'Optional Access Manager token for authorization (PAM V3)',
 		},
 	];
 
