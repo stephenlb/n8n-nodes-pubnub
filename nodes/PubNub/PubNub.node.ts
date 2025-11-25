@@ -546,11 +546,25 @@ export class PubNub implements INodeType {
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             const options = this.getNodeParameter('publishOptions', i, {}) as any;
 
+                            // Parse metadata if it's a string
+                            let metadata = {};
+                            if (options.meta) {
+                                try {
+                                    metadata = typeof options.meta === 'string' ? JSON.parse(options.meta) : options.meta;
+                                } catch (e) {
+                                    throw new NodeOperationError(
+                                        this.getNode(),
+                                        `Invalid JSON in metadata: ${(e as Error).message}`,
+                                        { itemIndex: i }
+                                    );
+                                }
+                            }
+
                             // Use the PubNub client for publishing
                             responseData = await pubnub.publish({
                                 channel,
                                 message,
-                                metadata: options.meta || {},
+                                metadata,
                             });
                         } else if (operation === 'signal') {
                             const signalMessage = this.getNodeParameter('signalMessage', i) as string;

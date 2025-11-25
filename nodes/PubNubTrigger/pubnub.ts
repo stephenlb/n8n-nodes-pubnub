@@ -225,21 +225,22 @@ async function PubNubPublish(this: PubNubInstance, setup: PubNubConfig = {}): Pr
     const params: Record<string, string> = {
         uuid: uuid,
         auth: authkey,
-        meta: JSON.stringify(metadata),
     };
 
+    // Only add meta if metadata is not empty
+    if (metadata && Object.keys(metadata).length > 0) {
+        params.meta = encodeURIComponent(JSON.stringify(metadata));
+    }
+
     const queryString = Object.entries(params)
-        .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+        .map(([key, value]) => `${key}=${value}`)
         .join('&');
 
     try {
         const response = await httpHelper({
             url: `${url}?${queryString}`,
             method: 'POST',
-            body: JSON.stringify(message),
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            body: message,
             json: true,
         });
 
@@ -274,7 +275,7 @@ async function PubNubSignal(this: PubNubInstance, setup: PubNubConfig = {}): Pro
     };
 
     const queryString = Object.entries(params)
-        .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+        .map(([key, value]) => `${key}=${value}`)
         .join('&');
 
     try {
