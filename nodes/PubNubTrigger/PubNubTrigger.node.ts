@@ -3,9 +3,10 @@ import type {
     INodeType,
     INodeTypeDescription,
     ITriggerResponse,
+    IDataObject,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import PubNubSDK from 'pubnub';
+import PubNubClient from './pubnub';
 
 export class PubNubTrigger implements INodeType {
     description: INodeTypeDescription = {
@@ -123,193 +124,107 @@ export class PubNubTrigger implements INodeType {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const options = this.getNodeParameter('options', {}) as any;
 
-        // Parse channels and channel groups
+        // Parse channels
         const channels = channelsStr
             ? channelsStr.split(',').map((c) => c.trim()).filter((c) => c.length > 0)
             : [];
-        const channelGroups = channelGroupsStr
-            ? channelGroupsStr.split(',').map((g) => g.trim()).filter((g) => g.length > 0)
-            : [];
 
-        // Validate that we have at least channels or channel groups
-        if (channels.length === 0 && channelGroups.length === 0) {
+        // Note: Channel groups not supported in simplified implementation
+        // You would need to expand channels from groups using PubNub REST API
+        if (channelGroupsStr) {
             throw new NodeOperationError(
                 this.getNode(),
-                'You must specify at least one channel or channel group',
+                'Channel groups not yet supported in this implementation. Please use direct channels.',
+            );
+        }
+
+        // Validate that we have at least one channel
+        if (channels.length === 0) {
+            throw new NodeOperationError(
+                this.getNode(),
+                'You must specify at least one channel',
             );
         }
 
         // Get credentials
         const credentials = await this.getCredentials('pubNubApi');
 
-        // Initialize PubNub client
-        const pubnub = new PubNubSDK({
-            publishKey: credentials.publishKey as string,
+        // Initialize PubNub client with configuration
+        const pubnub = PubNubClient({
             subscribeKey: credentials.subscribeKey as string,
-            secretKey: (credentials.secretKey as string) || undefined,
+            publishKey: credentials.publishKey as string,
             userId: (credentials.userId as string) || `n8n-trigger-${Date.now()}`,
             authKey: (credentials.authKey as string) || undefined,
-            restore: options.timetoken ? true : false,
+            httpHelper: this.helpers.httpRequest,
         });
 
-        // Create subscription options
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const subscribeParams: any = {
-            channels: channels.length > 0 ? channels : undefined,
-            channelGroups: channelGroups.length > 0 ? channelGroups : undefined,
-            withPresence: options.withPresence || false,
-        };
+        // Subscribe to each channel
+        // Store subscriptions for cleanup
+        const subscriptions: Array<{ unsubscribe: () => void; messages: (handler: (message: unknown) => void) => void }> = [];
 
-        if (options.timetoken) {
-            subscribeParams.timetoken = options.timetoken;
-        }
-
-        // Message listener
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const listener: any = {};
-
-        // Handle messages
-        if (triggerOn === 'message' || triggerOn === 'both') {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            listener.message = (messageEvent: any) => {
-                const workflowData = [
-                    this.helpers.returnJsonArray({
-                        event: 'message',
-                        channel: messageEvent.channel,
-                        subscription: messageEvent.subscription,
-                        message: messageEvent.message,
-                        timetoken: messageEvent.timetoken,
-                        publisher: messageEvent.publisher,
-                        ...(options.includeMeta && messageEvent.userMetadata
-                            ? { metadata: messageEvent.userMetadata }
-                            : {}),
-                        ...(options.includeMessageActions && messageEvent.actions
-                            ? { actions: messageEvent.actions }
-                            : {}),
-                    }),
-                ];
-                this.emit(workflowData);
-            };
-
-            // Handle signals (similar to messages but lighter)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            listener.signal = (signalEvent: any) => {
-                const workflowData = [
-                    this.helpers.returnJsonArray({
-                        event: 'signal',
-                        channel: signalEvent.channel,
-                        subscription: signalEvent.subscription,
-                        message: signalEvent.message,
-                        timetoken: signalEvent.timetoken,
-                        publisher: signalEvent.publisher,
-                    }),
-                ];
-                this.emit(workflowData);
-            };
-
-            // Handle message actions
-            if (options.includeMessageActions) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                listener.messageAction = (actionEvent: any) => {
-                    const workflowData = [
-                        this.helpers.returnJsonArray({
-                            event: 'messageAction',
-                            channel: actionEvent.channel,
-                            data: actionEvent.data,
-                        }),
-                    ];
-                    this.emit(workflowData);
-                };
-            }
-        }
-
-        // Handle presence events
-        if (triggerOn === 'presence' || triggerOn === 'both' || options.withPresence) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            listener.presence = (presenceEvent: any) => {
-                const workflowData = [
-                    this.helpers.returnJsonArray({
-                        event: 'presence',
-                        action: presenceEvent.action,
-                        channel: presenceEvent.channel,
-                        occupancy: presenceEvent.occupancy,
-                        state: presenceEvent.state,
-                        subscription: presenceEvent.subscription,
-                        timestamp: presenceEvent.timestamp,
-                        timetoken: presenceEvent.timetoken,
-                        uuid: presenceEvent.uuid,
-                    }),
-                ];
-                this.emit(workflowData);
-            };
-        }
-
-        // Handle status events (connection, errors, etc.)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        listener.status = (statusEvent: any) => {
-            const category = statusEvent.category;
-
-            // Log important status changes
-            if (category === 'PNConnectedCategory') {
-                console.log('PubNub Trigger: Connected successfully');
-            } else if (category === 'PNNetworkDownCategory') {
-                console.log('PubNub Trigger: Network is down');
-            } else if (category === 'PNReconnectedCategory') {
-                console.log('PubNub Trigger: Reconnected');
-            } else if (
-                category === 'PNUnexpectedDisconnectCategory' ||
-                category === 'PNAccessDeniedCategory'
-            ) {
-                console.error('PubNub Trigger: Connection issue', statusEvent);
-            }
-        };
-
-        // Add listener and subscribe
-        pubnub.addListener(listener);
-
-        // Apply filter expression if provided
-        if (options.filterExpression) {
-            pubnub.setFilterExpression(options.filterExpression as string);
-        }
-
-        // Subscribe to channels
-        pubnub.subscribe(subscribeParams);
-
-        // Manual trigger function for testing
-        const manualTriggerFunction = async () => {
-            return new Promise<void>((resolve) => {
-                const timeout = setTimeout(() => {
-                    resolve();
-                }, 30000); // Wait up to 30 seconds for a message
-
-                const tempListener = {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    message: (messageEvent: any) => {
-                        clearTimeout(timeout);
+        for (const channel of channels) {
+            const subscription = pubnub.subscribe({
+                channel,
+                filter: options.filterExpression || '',
+                timetoken: options.timetoken || '0',
+                messages: (message: unknown) => {
+                    // Handle messages based on trigger type
+                    if (triggerOn === 'message' || triggerOn === 'both') {
+                        const msgData = message as { metadata?: Record<string, unknown> };
                         const workflowData = [
                             this.helpers.returnJsonArray({
                                 event: 'message',
-                                channel: messageEvent.channel,
-                                message: messageEvent.message,
-                                timetoken: messageEvent.timetoken,
-                                publisher: messageEvent.publisher,
+                                channel,
+                                message: message as IDataObject,
+                                timestamp: Date.now(),
+                                ...(options.includeMeta && msgData.metadata
+                                    ? { metadata: msgData.metadata }
+                                    : {}),
                             }),
                         ];
                         this.emit(workflowData);
-                        resolve();
-                    },
+                    }
+                },
+            });
+
+            subscriptions.push(subscription);
+        }
+
+        // Manual trigger function for testing
+        const manualTriggerFunction = async () => {
+            // Wait for first message on any channel
+            return new Promise<void>((resolve) => {
+                const timeout = setTimeout(() => {
+                    resolve();
+                }, 30000);
+
+                const tempMessageHandler = (message: unknown) => {
+                    clearTimeout(timeout);
+                    const workflowData = [
+                        this.helpers.returnJsonArray({
+                            event: 'message',
+                            channel: channels[0],
+                            message: message as IDataObject,
+                            timestamp: Date.now(),
+                        }),
+                    ];
+                    this.emit(workflowData);
+                    resolve();
                 };
 
-                pubnub.addListener(tempListener);
+                // Temporarily override first subscription's message handler
+                if (subscriptions.length > 0) {
+                    subscriptions[0].messages(tempMessageHandler);
+                }
             });
         };
 
         // Cleanup function
         async function closeFunction() {
             console.log('PubNub Trigger: Unsubscribing and cleaning up');
-            pubnub.removeListener(listener);
-            pubnub.unsubscribeAll();
-            pubnub.destroy();
+            for (const subscription of subscriptions) {
+                subscription.unsubscribe();
+            }
         }
 
         return {

@@ -3,9 +3,10 @@ import type {
     INodeExecutionData,
     INodeType,
     INodeTypeDescription,
+    IDataObject,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import PubNubSDK from 'pubnub';
+import PubNubClient from './pubnub';
 
 export class PubNub implements INodeType {
     description: INodeTypeDescription = {
@@ -484,15 +485,49 @@ export class PubNub implements INodeType {
 
         // Get credentials
         const credentials = await this.getCredentials('pubNubApi');
+        const publishKey = credentials.publishKey as string;
+        const subscribeKey = credentials.subscribeKey as string;
+        const userId = (credentials.userId as string) || `n8n-user-${Date.now()}`;
+        const authKey = (credentials.authKey as string) || '';
+        const origin = 'ps.pndsn.com';
 
         // Initialize PubNub client
-        const pubnub = new PubNubSDK({
-            publishKey: credentials.publishKey as string,
-            subscribeKey: credentials.subscribeKey as string,
-            secretKey: (credentials.secretKey as string) || undefined,
-            userId: (credentials.userId as string) || `n8n-user-${Date.now()}`,
-            authKey: (credentials.authKey as string) || undefined,
+        const pubnub = PubNubClient({
+            publishKey,
+            subscribeKey,
+            userId,
+            authKey,
+            origin,
+            httpHelper: this.helpers.httpRequest,
         });
+
+        // Helper function for making authenticated PubNub API requests
+        const pubNubRequest = async (options: {
+            method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'HEAD' | 'PATCH';
+            endpoint: string;
+            qs?: IDataObject;
+            body?: string | IDataObject;
+        }) => {
+            const { method = 'GET', endpoint, qs = {}, body } = options;
+            const url = `https://${origin}${endpoint}`;
+
+            // Add auth and uuid to query string
+            const queryParams: IDataObject = {
+                ...qs,
+                uuid: userId,
+            };
+            if (authKey) {
+                queryParams.auth = authKey;
+            }
+
+            return await this.helpers.httpRequest({
+                method,
+                url,
+                qs: queryParams,
+                body,
+                json: true,
+            });
+        };
 
         try {
             for (let i = 0; i < items.length; i++) {
@@ -511,16 +546,16 @@ export class PubNub implements INodeType {
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             const options = this.getNodeParameter('publishOptions', i, {}) as any;
 
+                            // Use the PubNub client for publishing
                             responseData = await pubnub.publish({
                                 channel,
                                 message,
-                                storeInHistory: options.storeInHistory ?? true,
-                                meta: options.meta || undefined,
-                                ttl: options.ttl || undefined,
+                                metadata: options.meta || {},
                             });
                         } else if (operation === 'signal') {
                             const signalMessage = this.getNodeParameter('signalMessage', i) as string;
 
+                            // Use the PubNub client for sending signals
                             responseData = await pubnub.signal({
                                 channel,
                                 message: signalMessage,
@@ -538,21 +573,36 @@ export class PubNub implements INodeType {
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             const options = this.getNodeParameter('historyOptions', i, {}) as any;
 
-                            responseData = await pubnub.fetchMessages({
-                                channels: [channel],
-                                count: options.count || 100,
-                                start: options.start || undefined,
-                                end: options.end || undefined,
-                                includeMeta: options.includeMeta || false,
-                                includeMessageActions: options.includeMessageActions || false,
+                            const qs: IDataObject = {
+                                max: options.count || 100,
+                            };
+                            if (options.start) {
+                                qs.start = options.start;
+                            }
+                            if (options.end) {
+                                qs.end = options.end;
+                            }
+                            if (options.includeMeta) {
+                                qs.include_meta = 'true';
+                            }
+                            if (options.includeMessageActions) {
+                                qs.include_message_actions = 'true';
+                            }
+
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v3/history/sub-key/${subscribeKey}/channel/${encodeURIComponent(channel)}`,
+                                qs,
                             });
                         } else if (operation === 'deleteMessages') {
-                            responseData = await pubnub.deleteMessages({
-                                channel,
+                            responseData = await pubNubRequest({
+                                method: 'DELETE',
+                                endpoint: `/v3/history/sub-key/${subscribeKey}/channel/${encodeURIComponent(channel)}`,
                             });
                         } else if (operation === 'messageCounts') {
-                            responseData = await pubnub.messageCounts({
-                                channels: [channel],
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v3/history/sub-key/${subscribeKey}/message-counts/${encodeURIComponent(channel)}`,
                             });
                         }
                     }
@@ -567,36 +617,48 @@ export class PubNub implements INodeType {
                             const options = this.getNodeParameter('presenceOptions', i, {}) as any;
                             const channels = channelsStr ? channelsStr.split(',').map((c) => c.trim()) : [];
 
-                            responseData = await pubnub.hereNow({
-                                channels: channels.length > 0 ? channels : undefined,
-                                includeUUIDs: options.includeUUIDs ?? true,
-                                includeState: options.includeState ?? false,
+                            const qs: IDataObject = {
+                                disable_uuids: options.includeUUIDs === false ? '1' : '0',
+                                state: options.includeState ? '1' : '0',
+                            };
+
+                            const channelPath = channels.length > 0 ? channels.join(',') : '';
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v2/presence/sub-key/${subscribeKey}/channel/${encodeURIComponent(channelPath)}`,
+                                qs,
                             });
                         } else if (operation === 'whereNow') {
                             const uuid = this.getNodeParameter('uuid', i, '') as string;
+                            const targetUuid = uuid || userId;
 
-                            responseData = await pubnub.whereNow({
-                                uuid: uuid || undefined,
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v2/presence/sub-key/${subscribeKey}/uuid/${encodeURIComponent(targetUuid)}`,
                             });
                         } else if (operation === 'setState') {
                             const channelsStr = this.getNodeParameter('channels', i) as string;
                             const uuid = this.getNodeParameter('uuid', i, '') as string;
                             const state = this.getNodeParameter('state', i) as object;
                             const channels = channelsStr.split(',').map((c) => c.trim());
+                            const targetUuid = uuid || userId;
 
-                            responseData = await pubnub.setState({
-                                channels,
-                                uuid: uuid || undefined,
-                                state,
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v2/presence/sub-key/${subscribeKey}/channel/${encodeURIComponent(channels.join(','))}/uuid/${encodeURIComponent(targetUuid)}/data`,
+                                qs: {
+                                    state: JSON.stringify(state),
+                                },
                             });
                         } else if (operation === 'getState') {
                             const channelsStr = this.getNodeParameter('channels', i) as string;
                             const uuid = this.getNodeParameter('uuid', i, '') as string;
                             const channels = channelsStr.split(',').map((c) => c.trim());
+                            const targetUuid = uuid || userId;
 
-                            responseData = await pubnub.getState({
-                                channels,
-                                uuid: uuid || undefined,
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v2/presence/sub-key/${subscribeKey}/channel/${encodeURIComponent(channels.join(','))}/uuid/${encodeURIComponent(targetUuid)}`,
                             });
                         }
                     }
@@ -611,25 +673,36 @@ export class PubNub implements INodeType {
                             const channelsStr = this.getNodeParameter('channels', i) as string;
                             const channels = channelsStr.split(',').map((c) => c.trim());
 
-                            responseData = await pubnub.channelGroups.addChannels({
-                                channels,
-                                channelGroup,
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v1/channel-registration/sub-key/${subscribeKey}/channel-group/${encodeURIComponent(channelGroup)}`,
+                                qs: {
+                                    add: channels.join(','),
+                                },
                             });
                         } else if (operation === 'removeChannels') {
                             const channelsStr = this.getNodeParameter('channels', i) as string;
                             const channels = channelsStr.split(',').map((c) => c.trim());
 
-                            responseData = await pubnub.channelGroups.removeChannels({
-                                channels,
-                                channelGroup,
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v1/channel-registration/sub-key/${subscribeKey}/channel-group/${encodeURIComponent(channelGroup)}`,
+                                qs: {
+                                    remove: channels.join(','),
+                                },
                             });
                         } else if (operation === 'listChannels') {
-                            responseData = await pubnub.channelGroups.listChannels({
-                                channelGroup,
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v1/channel-registration/sub-key/${subscribeKey}/channel-group/${encodeURIComponent(channelGroup)}`,
                             });
                         } else if (operation === 'deleteGroup') {
-                            responseData = await pubnub.channelGroups.deleteGroup({
-                                channelGroup,
+                            responseData = await pubNubRequest({
+                                method: 'GET',
+                                endpoint: `/v1/channel-registration/sub-key/${subscribeKey}/channel-group/${encodeURIComponent(channelGroup)}`,
+                                qs: {
+                                    'remove-group': '',
+                                },
                             });
                         }
                     }
@@ -656,8 +729,7 @@ export class PubNub implements INodeType {
 
             return [returnData];
         } finally {
-            // Cleanup PubNub connection
-            pubnub.destroy();
+            // Cleanup if needed
         }
     }
 }

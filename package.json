@@ -1,6 +1,6 @@
 {
     "name": "n8n-nodes-pubnub",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "description": "n8n node for PubNub real-time messaging platform",
     "keywords": [
         "n8n-community-node-package",
@@ -54,8 +54,5 @@
     },
     "peerDependencies": {
         "n8n-workflow": "*"
-    },
-    "dependencies": {
-        "pubnub": "^7.6.3"
     }
 }
