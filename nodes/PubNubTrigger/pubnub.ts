@@ -108,8 +108,7 @@ function PubNubSubscribe(this: PubNubInstance, setup: PubNubConfig = {}): PubNub
                 await poll();
             } catch (e) {
                 if (!subscribed || aborted) break;
-                // Wait 1 second before retrying on error
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+                // Retry immediately on error - the HTTP timeout parameter handles request timeouts
             }
         }
     }

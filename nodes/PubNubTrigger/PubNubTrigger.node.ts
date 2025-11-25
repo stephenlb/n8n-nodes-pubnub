@@ -194,12 +194,7 @@ export class PubNubTrigger implements INodeType {
         const manualTriggerFunction = async () => {
             // Wait for first message on any channel
             return new Promise<void>((resolve) => {
-                const timeout = setTimeout(() => {
-                    resolve();
-                }, 30000);
-
                 const tempMessageHandler = (message: unknown) => {
-                    clearTimeout(timeout);
                     const workflowData = [
                         this.helpers.returnJsonArray({
                             event: 'message',
@@ -221,7 +216,6 @@ export class PubNubTrigger implements INodeType {
 
         // Cleanup function
         async function closeFunction() {
-            console.log('PubNub Trigger: Unsubscribing and cleaning up');
             for (const subscription of subscriptions) {
                 subscription.unsubscribe();
             }
