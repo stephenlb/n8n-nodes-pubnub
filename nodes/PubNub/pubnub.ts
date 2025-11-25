@@ -4,8 +4,7 @@
 // - - - - - - - - - - - - - - - - - - - - - - -
 // Features
 // - - - - - - - - - - - - - - - - - - - - - - -
-//  - Publish/Subscribe via REST API
-//  - Long-polling subscribe
+//  - Publish/Signal via REST API
 //  - Dedicated queue per channel for maximum performance
 //  - Uses n8n HTTP helpers for requests
 //  - No external dependencies
@@ -34,14 +33,7 @@ interface PubNubConfig {
     httpHelper?: HttpHelper;
 }
 
-interface PubNubSubscription {
-    messages: (receiver: (message: PubNubMessage) => void) => void;
-    unsubscribe: () => void;
-    [Symbol.asyncIterator](): AsyncIterator<PubNubMessage>;
-}
-
 interface PubNubInstance {
-    subscribe: (setup?: PubNubConfig) => PubNubSubscription;
     publish: (setup?: PubNubConfig) => Promise<unknown>;
     signal: (setup?: PubNubConfig) => Promise<unknown>;
     subscribeKey?: string;
@@ -59,7 +51,6 @@ interface PubNubInstance {
 // PubNub Client Factory
 function PubNub(setup: PubNubConfig): PubNubInstance {
     const instance = {
-        subscribe: PubNubSubscribe,
         publish: PubNubPublish,
         signal: PubNubSignal,
     } as PubNubInstance;
